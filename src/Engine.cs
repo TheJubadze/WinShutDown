@@ -44,6 +44,7 @@ namespace WinShutDown
         string exemptUsers;
         bool sessionErrorLogged;
         WebAdminServer web;     // управление через браузер
+        MdnsResponder mdns;     // постоянный адрес winshutdown.local
         string voiceName;       // русский голос на этом компьютере (для веб-админки)
 
         public event Action ExitRequested;
@@ -57,6 +58,7 @@ namespace WinShutDown
             voiceName = Speaker.FindRussianVoiceName();
             // В тестовом режиме — только на этом компьютере (127.0.0.1), чтобы не открывать порт в сеть.
             web = new WebAdminServer(this, opt.RemotePort, loopbackOnly: opt.Test);
+            mdns = new MdnsResponder(opt.MdnsPort, loopbackOnly: opt.Test);
             new PipeServer(opt.PipeName, Handle).Start();
             new Thread(Loop) { IsBackground = true, Name = "engine" }.Start();
             Log.Info($"Запущено, версия {Installer.AppVersion}" + (opt.DryRun ? " — ТЕСТОВЫЙ режим (компьютер не выключается)" : ""));
@@ -102,7 +104,9 @@ namespace WinShutDown
                 }
 
                 agents.Update(s.Warning);
-                web.SetEnabled(c.RemoteEnabled && !string.IsNullOrEmpty(c.PasswordHash));
+                bool remote = c.RemoteEnabled && !string.IsNullOrEmpty(c.PasswordHash);
+                web.SetEnabled(remote);
+                mdns.SetEnabled(remote);
 
                 if (s.Due && (now - lastShutdownAttemptUtc).TotalSeconds >= 60)
                 {

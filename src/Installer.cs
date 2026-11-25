@@ -481,6 +481,9 @@ namespace WinShutDown
             RemoveFirewallRule();
             Netsh($"advfirewall firewall add rule name=\"{FirewallRuleName}\" dir=in action=allow program=\"{InstalledExe}\" " +
                   $"protocol=TCP localport={WebAdminServer.DefaultPort} remoteip=localsubnet profile=any enable=yes");
+            // Ответы на имя winshutdown.local (mDNS).
+            Netsh($"advfirewall firewall add rule name=\"{FirewallRuleName}\" dir=in action=allow program=\"{InstalledExe}\" " +
+                  $"protocol=UDP localport={MdnsResponder.StandardPort} remoteip=localsubnet profile=any enable=yes");
         }
 
         static void RemoveFirewallRule() => Netsh($"advfirewall firewall delete rule name=\"{FirewallRuleName}\"");

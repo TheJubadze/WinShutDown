@@ -31,12 +31,13 @@ namespace WinShutDown
         public int[] InitWarnings;
         public string OutFile;                // только для --selftest
         public int RemotePort = WebAdminServer.DefaultPort; // порт веб-админки
+        public int MdnsPort = MdnsResponder.StandardPort;   // порт ответов на имя winshutdown.local
         public bool InitRemote;               // только для --console: включить веб-админку в новых настройках
 
         public static Options Parse(string[] args)
         {
             var o = new Options();
-            bool configGiven = false, pipeGiven = false;
+            bool configGiven = false, pipeGiven = false, mdnsGiven = false;
             for (int i = 0; i < args.Length; i++)
             {
                 string a = args[i].ToLowerInvariant();
@@ -63,6 +64,7 @@ namespace WinShutDown
                         break;
                     case "--out": o.OutFile = Value(args, ref i); break;
                     case "--port": o.RemotePort = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture); break;
+                    case "--mdns-port": o.MdnsPort = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture); mdnsGiven = true; break;
                     case "--allow-remote": o.InitRemote = true; break;
                 }
             }
@@ -74,6 +76,7 @@ namespace WinShutDown
                 o.DryRun = true;
                 if (!pipeGiven) o.PipeName = Constants.TestPipeName;
                 if (!configGiven) o.ConfigPath = Path.Combine(Path.GetTempPath(), "WinShutDown-test", "config.ini");
+                if (!mdnsGiven) o.MdnsPort = 5354; // не занимать стандартный порт 5353 при проверках
             }
             return o;
         }

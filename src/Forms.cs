@@ -387,9 +387,10 @@ namespace WinShutDown
             }
             int port = opt.RemotePort;
             List<string> ips = NetInfo.LocalIPv4();
-            string byIp = ips.Count > 0 ? " или " + string.Join(", ", ips.Select(ip => NetInfo.AdminUrl(ip, port))) : "";
-            lblRemote.Text = $"Откройте в браузере: {NetInfo.AdminUrl(Environment.MachineName, port)}{byIp} " +
-                             "и введите пароль родителя. На телефоне надёжнее адрес с цифрами.";
+            string byIp = ips.Count > 0 ? ", " + string.Join(", ", ips.Select(ip => NetInfo.AdminUrl(ip, port))) : "";
+            lblRemote.Text = $"Откройте в браузере {NetInfo.AdminUrl(MdnsResponder.FixedName, port)} и введите пароль родителя — " +
+                             "этот адрес не меняется. Если не открывается (бывает на Android), используйте " +
+                             $"{NetInfo.AdminUrl(MdnsResponder.MachineLocalName, port)}{byIp}.";
         }
 
         void LoadValues(bool enabled, DayRule[] days, int[] warnings, bool voice, bool adminExempt, bool remote, string tz)

@@ -182,6 +182,45 @@ namespace WinShutDown
                     Check("страница веб-админки вшита в программу", html.Contains("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") && html.Length > 10000);
                 }
 
+                // --- постоянный адрес winshutdown.local (mDNS) ---
+                byte[] query = MdnsResponder.BuildQuery(0x1234, "WinShutDown.Local", MdnsResponder.TypeA, false);
+                Check("mDNS: разбор вопроса",
+                      MdnsResponder.TryParseQuery(query, query.Length, out ushort qid, out var qs) && qid == 0x1234 && qs.Count == 1 &&
+                      qs[0].Name == "WinShutDown.Local" && qs[0].Type == MdnsResponder.TypeA && !qs[0].Unicast);
+                byte[] quQuery = MdnsResponder.BuildQuery(7, "winshutdown.local", MdnsResponder.TypeAAAA, true);
+                Check("mDNS: бит «ответить напрямую» и тип AAAA",
+                      MdnsResponder.TryParseQuery(quQuery, quQuery.Length, out _, out var qs2) && qs2[0].Unicast && qs2[0].Type == MdnsResponder.TypeAAAA);
+                // два вопроса, второй — сжатой ссылкой на имя первого
+                var two = new List<byte>(MdnsResponder.BuildQuery(1, "winshutdown.local", MdnsResponder.TypeA, false));
+                two[5] = 2;
+                two.AddRange(new byte[] { 0xC0, 0x0C, 0x00, 0x1C, 0x00, 0x01 });
+                Check("mDNS: сжатые имена",
+                      MdnsResponder.TryParseQuery(two.ToArray(), two.Count, out _, out var qs3) && qs3.Count == 2 &&
+                      qs3[1].Name == "winshutdown.local" && qs3[1].Type == MdnsResponder.TypeAAAA);
+                byte[] loop = { 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0xC0, 0x0C, 0, 1, 0, 1 };
+                Check("mDNS: зацикленная ссылка и обрезанный пакет не ломают разбор",
+                      !MdnsResponder.TryParseQuery(loop, loop.Length, out _, out _) && !MdnsResponder.TryParseQuery(query, 15, out _, out _));
+                byte[] answerFlag = (byte[])query.Clone();
+                answerFlag[2] = 0x84;
+                Check("mDNS: чужие ответы не считаются вопросами", !MdnsResponder.TryParseQuery(answerFlag, answerFlag.Length, out _, out _));
+
+                var ip = System.Net.IPAddress.Parse("192.168.1.23");
+                byte[] legacyResp = MdnsResponder.BuildResponse(0x1234, "winshutdown.local", MdnsResponder.TypeA, ip, true, 10);
+                Check("mDNS: ответ на обычный DNS-запрос — тот же id, вопрос, адрес, TTL 10, без cache-flush",
+                      legacyResp[0] == 0x12 && legacyResp[1] == 0x34 && legacyResp[2] == 0x84 && legacyResp[5] == 1 && legacyResp[7] == 1 &&
+                      legacyResp[35] == 0xC0 && legacyResp[36] == 12 && legacyResp[38] == 1 && legacyResp[39] == 0 && legacyResp[40] == 1 &&
+                      legacyResp[44] == 10 && legacyResp[46] == 4 &&
+                      legacyResp[47] == 192 && legacyResp[48] == 168 && legacyResp[49] == 1 && legacyResp[50] == 23 && legacyResp.Length == 51);
+                byte[] mdnsResp = MdnsResponder.BuildResponse(0, "winshutdown.local", MdnsResponder.TypeA, ip, false, 120);
+                Check("mDNS: ответ в группу — id 0, без вопроса, cache-flush, TTL 120",
+                      mdnsResp[0] == 0 && mdnsResp[1] == 0 && mdnsResp[5] == 0 && mdnsResp[7] == 1 &&
+                      mdnsResp[32] == 1 && mdnsResp[33] == 0x80 && mdnsResp[34] == 1 && mdnsResp[38] == 120 && mdnsResp[44] == 23);
+                byte[] nsec = MdnsResponder.BuildResponse(0, "winshutdown.local", MdnsResponder.TypeAAAA, ip, false, 120);
+                Check("mDNS: на вопрос об IPv6 — NSEC «есть только IPv4»",
+                      nsec[32] == MdnsResponder.TypeNSEC && nsec[40] == 5 && nsec[nsec.Length - 1] == 0x40 && nsec[nsec.Length - 3] == 0);
+                Check("mDNS: имена — winshutdown.local и имя компьютера",
+                      MdnsResponder.Names.Contains("winshutdown.local") && MdnsResponder.Names[1] == Environment.MachineName.ToLowerInvariant() + ".local");
+
                 Check("голос по умолчанию включён", new AppConfig().Voice);
                 Check("«не выключать при администраторе» по умолчанию включено", new AppConfig().AdminExempt);
                 using (var me = System.Security.Principal.WindowsIdentity.GetCurrent())
