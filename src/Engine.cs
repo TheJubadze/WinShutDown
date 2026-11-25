@@ -43,6 +43,8 @@ namespace WinShutDown
         bool exempt;            // сейчас за компьютером только администраторы
         string exemptUsers;
         bool sessionErrorLogged;
+        WebAdminServer web;     // управление через браузер
+        string voiceName;       // русский голос на этом компьютере (для веб-админки)
 
         public event Action ExitRequested;
 
@@ -52,6 +54,9 @@ namespace WinShutDown
         {
             lock (sync) ReloadConfigIfChanged(true);
             agents = new AgentManager(opt);
+            voiceName = Speaker.FindRussianVoiceName();
+            // В тестовом режиме — только на этом компьютере (127.0.0.1), чтобы не открывать порт в сеть.
+            web = new WebAdminServer(this, opt.RemotePort, loopbackOnly: opt.Test);
             new PipeServer(opt.PipeName, Handle).Start();
             new Thread(Loop) { IsBackground = true, Name = "engine" }.Start();
             Log.Info($"Запущено, версия {Installer.AppVersion}" + (opt.DryRun ? " — ТЕСТОВЫЙ режим (компьютер не выключается)" : ""));
@@ -97,6 +102,7 @@ namespace WinShutDown
                 }
 
                 agents.Update(s.Warning);
+                web.SetEnabled(c.RemoteEnabled && !string.IsNullOrEmpty(c.PasswordHash));
 
                 if (s.Due && (now - lastShutdownAttemptUtc).TotalSeconds >= 60)
                 {
@@ -248,27 +254,88 @@ namespace WinShutDown
             lock (authSync) // проверки идут строго по одной — параллельный перебор не поможет
             {
                 DateTime now = DateTime.UtcNow;
-                if (now < lockedUntilUtc)
-                    return Protocol.Error("locked", "Слишком много неверных попыток. Подождите " + Ru.Duration(lockedUntilUtc - now) + ".");
+                if (now < lockedUntilUtc) return LockedError(now);
 
                 string hash;
                 lock (sync) hash = cfg.PasswordHash;
-                if (!PasswordHasher.Verify(pwd, hash))
-                {
-                    failedLogins++;
-                    Log.Info($"Неверный пароль (попытка {failedLogins})");
-                    if (failedLogins >= MaxFailedLogins)
-                    {
-                        failedLogins = 0;
-                        lockedUntilUtc = now + LockoutTime;
-                        Log.Info("Вход заблокирован на 5 минут");
-                        return Protocol.Error("locked", "Слишком много неверных попыток. Вход заблокирован на 5 минут.");
-                    }
-                    return Protocol.Error("badpwd", "Неверный пароль");
-                }
+                if (!PasswordHasher.Verify(pwd, hash)) return RegisterFailure(now, "");
                 failedLogins = 0;
             }
             return action();
+        }
+
+        /// <summary>Вызывать под lock(authSync).</summary>
+        Dictionary<string, string> LockedError(DateTime now) =>
+            Protocol.Error("locked", "Слишком много неверных попыток. Подождите " + Ru.Duration(lockedUntilUtc - now) + ".");
+
+        /// <summary>Вызывать под lock(authSync). Счётчик ошибок общий для входа на компьютере и через браузер.</summary>
+        Dictionary<string, string> RegisterFailure(DateTime now, string where)
+        {
+            failedLogins++;
+            Log.Info($"Неверный пароль{where} (попытка {failedLogins})");
+            if (failedLogins >= MaxFailedLogins)
+            {
+                failedLogins = 0;
+                lockedUntilUtc = now + LockoutTime;
+                Log.Info("Вход заблокирован на 5 минут");
+                return Protocol.Error("locked", "Слишком много неверных попыток. Вход заблокирован на 5 минут.");
+            }
+            return Protocol.Error("badpwd", "Неверный пароль");
+        }
+
+        // ---------------- управление через браузер ----------------
+
+        /// <summary>Первый шаг запроса из браузера: одноразовое число и параметры, чтобы страница вычислила ключ из пароля.</summary>
+        public Dictionary<string, string> RemoteHello(string nonce)
+        {
+            string hash;
+            lock (sync) hash = cfg.PasswordHash;
+            if (!PasswordHasher.TryParse(hash, out int iter, out byte[] salt, out byte[] key))
+                return Protocol.Error("nopwd", "На компьютере ребёнка не задан пароль родителя");
+            var r = Protocol.Ok();
+            r["nonce"] = nonce;
+            r["salt"] = Convert.ToBase64String(salt);
+            r["iter"] = iter.ToString(CultureInfo.InvariantCulture);
+            r["len"] = key.Length.ToString(CultureInfo.InvariantCulture);
+            r["machine"] = Environment.MachineName;
+            r["version"] = Installer.AppVersion;
+            return r;
+        }
+
+        /// <summary>
+        /// Запрос из браузера: подпись HMAC-SHA256 (ключ = хэш пароля) над присланным текстом запроса.
+        /// По сети доступны только статус, сохранение настроек и продление; пароль, удаление и обновление — на месте.
+        /// </summary>
+        public Dictionary<string, string> HandleRemote(Dictionary<string, string> req, string mac, byte[] payload, string from)
+        {
+            lock (authSync)
+            {
+                DateTime now = DateTime.UtcNow;
+                if (now < lockedUntilUtc) return LockedError(now);
+                string hash;
+                lock (sync) hash = cfg.PasswordHash;
+                bool ok = PasswordHasher.TryParse(hash, out _, out _, out byte[] key) &&
+                          RemoteAuth.SameMac(mac, RemoteAuth.Mac(key, payload));
+                if (!ok) return RegisterFailure(now, $" (через браузер с {from})");
+                failedLogins = 0;
+            }
+
+            switch (Protocol.Get(req, "cmd"))
+            {
+                case "status":
+                    return StatusResponse();
+                case "login":
+                    Log.Info($"Вход через браузер с {from}");
+                    return Protocol.Ok();
+                case "save":
+                    Log.Info($"Изменение настроек через браузер с {from}");
+                    return SaveSettings(req);
+                case "extend":
+                    Log.Info($"Продление через браузер с {from}");
+                    return Extend(req);
+                default:
+                    return Protocol.Error("localonly", "Это можно сделать только на компьютере ребёнка");
+            }
         }
 
         Dictionary<string, string> SaveSettings(Dictionary<string, string> req)
@@ -283,6 +350,7 @@ namespace WinShutDown
             bool enabled = Protocol.Get(req, "enabled") == "1";
             bool voice = Protocol.Get(req, "voice") != "0";
             bool adminExempt = Protocol.Get(req, "adminexempt") != "0";
+            string remoteParam = Protocol.Get(req, "remote"); // нет — оставить как есть (окна настроек прежних версий)
 
             lock (sync)
             {
@@ -290,6 +358,7 @@ namespace WinShutDown
                 next.Enabled = enabled;
                 next.Voice = voice;
                 next.AdminExempt = adminExempt;
+                if (remoteParam != null) next.RemoteEnabled = remoteParam == "1";
                 next.Days = days;
                 next.Warnings = warn;
                 next.TimeZoneId = tz;
@@ -299,7 +368,8 @@ namespace WinShutDown
             }
             Log.Info($"Настройки изменены: включено={(enabled ? "да" : "нет")}, расписание [{DescribeDays(days)}], " +
                      $"предупреждения за {Ru.JoinAnd(warn)} мин{(voice ? " голосом" : " звуком")}, " +
-                     $"не выключать при администраторе={(adminExempt ? "да" : "нет")}, пояс {tz}");
+                     $"не выключать при администраторе={(adminExempt ? "да" : "нет")}, пояс {tz}" +
+                     (remoteParam != null ? $", управление через браузер={(remoteParam == "1" ? "да" : "нет")}" : ""));
             return StatusResponse();
         }
 
@@ -397,7 +467,12 @@ namespace WinShutDown
             r["warn"] = Schedule.FormatWarnings(c.Warnings);
             r["voice"] = c.Voice ? "1" : "0";
             r["adminexempt"] = c.AdminExempt ? "1" : "0";
+            r["remote"] = c.RemoteEnabled ? "1" : "0";
             r["tz"] = c.TimeZoneId;
+            r["tzName"] = zone.DisplayName;
+            r["machine"] = Environment.MachineName;
+            r["version"] = Installer.AppVersion;
+            if (voiceName != null) r["voiceName"] = voiceName;
             r["today"] = TimeZoneInfo.ConvertTimeFromUtc(now, zone).ToString("yyyy-MM-dd", inv);
             if (s.Active && s.DeadlineUtc != Schedule.Never)
             {
@@ -405,6 +480,7 @@ namespace WinShutDown
                 r["deadline"] = s.DeadlineUtc.Ticks.ToString(inv);
                 r["deadlineLocal"] = local.ToString("HH:mm", inv);
                 r["deadlineDate"] = local.ToString("yyyy-MM-dd", inv);
+                r["leftMin"] = Math.Max(0, (int)Math.Ceiling((s.DeadlineUtc - now).TotalMinutes)).ToString(inv);
             }
             if (c.ExtensionUntilUtcTicks > now.Ticks)
             {

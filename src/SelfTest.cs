@@ -144,15 +144,43 @@ namespace WinShutDown
 
                 // --- файл настроек ---
                 string tmp = Path.Combine(Path.GetTempPath(), "winshutdown-selftest.ini");
-                var saved = new AppConfig { Enabled = false, Days = withFree, Warnings = new[] { 20, 7 }, Voice = false, AdminExempt = false, TimeZoneId = "UTC", PasswordHash = hash, ExtensionUntilUtcTicks = 123456789 };
+                var saved = new AppConfig { Enabled = false, Days = withFree, Warnings = new[] { 20, 7 }, Voice = false, AdminExempt = false, RemoteEnabled = true, TimeZoneId = "UTC", PasswordHash = hash, ExtensionUntilUtcTicks = 123456789 };
                 saved.Days[(int)DayOfWeek.Saturday] = new DayRule(9 * 60, 30);
                 saved.Save(tmp);
                 saved.Save(tmp); // повторная запись (через File.Replace)
                 AppConfig loaded = AppConfig.Load(tmp);
                 File.Delete(tmp);
                 Check("настройки: запись и чтение", !loaded.Enabled && Schedule.FormatDays(loaded.Days) == Schedule.FormatDays(saved.Days) &&
-                      Schedule.FormatWarnings(loaded.Warnings) == "20,7" && !loaded.Voice && !loaded.AdminExempt && loaded.TimeZoneId == "UTC" &&
+                      Schedule.FormatWarnings(loaded.Warnings) == "20,7" && !loaded.Voice && !loaded.AdminExempt && loaded.RemoteEnabled && loaded.TimeZoneId == "UTC" &&
                       loaded.PasswordHash == hash && loaded.ExtensionUntilUtcTicks == 123456789);
+
+                // --- управление через браузер ---
+                Check("управление через браузер по умолчанию выключено", !new AppConfig().RemoteEnabled);
+                Func<string, bool> local = ip => NetInfo.IsLocalNetwork(System.Net.IPAddress.Parse(ip));
+                Check("домашняя сеть: 192.168.1.5, 10.0.0.7, 172.16.3.4, 169.254.1.1, 127.0.0.1",
+                      local("192.168.1.5") && local("10.0.0.7") && local("172.16.3.4") && local("169.254.1.1") && local("127.0.0.1"));
+                Check("не домашняя сеть: 8.8.8.8, 172.32.0.1, 100.64.0.1", !local("8.8.8.8") && !local("172.32.0.1") && !local("100.64.0.1"));
+                Check("IPv6: ::1, fe80::1, fd00::5 — домашняя; 2001:db8::1 — нет",
+                      local("::1") && local("fe80::1") && local("fd00::5") && !local("2001:db8::1"));
+                Check("IPv4 в виде IPv6 (::ffff:192.168.1.5) — домашняя", local("::ffff:192.168.1.5"));
+
+                string remoteHash = PasswordHasher.Hash("Пароль родителя 1");
+                Check("разбор хэша пароля", PasswordHasher.TryParse(remoteHash, out int rIter, out byte[] rSalt, out byte[] rKey) && rKey.Length == 32);
+                byte[] browserKey = PasswordHasher.DeriveKey("Пароль родителя 1", rSalt, rIter, 32);
+                byte[] payloadBytes = Encoding.UTF8.GetBytes("cmd=status\nnonce=abc\n");
+                string browserMac = RemoteAuth.Mac(browserKey, payloadBytes);
+                Check("подпись запроса верным паролем совпадает", RemoteAuth.SameMac(browserMac, RemoteAuth.Mac(rKey, payloadBytes)));
+                byte[] wrongKey = PasswordHasher.DeriveKey("Пароль родителя 2", rSalt, rIter, 32);
+                Check("подпись неверным паролем не совпадает", !RemoteAuth.SameMac(RemoteAuth.Mac(wrongKey, payloadBytes), RemoteAuth.Mac(rKey, payloadBytes)));
+                Check("изменённый запрос не проходит проверку",
+                      !RemoteAuth.SameMac(browserMac, RemoteAuth.Mac(rKey, Encoding.UTF8.GetBytes("cmd=save\nnonce=abc\n"))));
+                Check("одноразовые числа не повторяются", RemoteAuth.NewNonce() != RemoteAuth.NewNonce());
+                using (Stream page = typeof(SelfTest).Assembly.GetManifestResourceStream("WinShutDown.admin.html"))
+                using (var reader = new StreamReader(page ?? Stream.Null, Encoding.UTF8))
+                {
+                    string html = reader.ReadToEnd();
+                    Check("страница веб-админки вшита в программу", html.Contains("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") && html.Length > 10000);
+                }
 
                 Check("голос по умолчанию включён", new AppConfig().Voice);
                 Check("«не выключать при администраторе» по умолчанию включено", new AppConfig().AdminExempt);

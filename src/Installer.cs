@@ -278,6 +278,7 @@ namespace WinShutDown
             Sc($"description {Svc} \"{Constants.Description}\"", optional: true);
             Sc($"failure {Svc} reset= 86400 actions= restart/2000/restart/2000/restart/5000", optional: true);
             Sc($"failureflag {Svc} 1", optional: true);
+            AddFirewallRule();
 
             // 4. Служба запускается и в безопасном режиме.
             foreach (string k in SafeBootKeys)
@@ -306,6 +307,7 @@ namespace WinShutDown
             catch { }
 
             Sc($"delete {Svc}", optional: true);
+            RemoveFirewallRule();
 
             uint pid = ServiceUtil.GetServicePid();
             if (pid != 0)
@@ -380,6 +382,7 @@ namespace WinShutDown
                     using (RegistryKey key = Registry.LocalMachine.CreateSubKey(k))
                         key?.SetValue("", "Service");
                 try { CreateShortcut(); } catch { }
+                AddFirewallRule(); // в прежних версиях правила не было
             }
             catch (Exception ex)
             {
@@ -467,10 +470,33 @@ namespace WinShutDown
             Directory.SetAccessControl(dir, sec);
         }
 
-        static void Sc(string args, bool optional = false)
+        const string FirewallRuleName = "WinShutDown web admin";
+
+        /// <summary>
+        /// Разрешить в брандмауэре Windows входящие подключения к веб-админке: только порт программы, только её exe
+        /// и только из локальной подсети. Сама служба слушает порт, только если управление через браузер включено.
+        /// </summary>
+        static void AddFirewallRule()
+        {
+            RemoveFirewallRule();
+            Netsh($"advfirewall firewall add rule name=\"{FirewallRuleName}\" dir=in action=allow program=\"{InstalledExe}\" " +
+                  $"protocol=TCP localport={WebAdminServer.DefaultPort} remoteip=localsubnet profile=any enable=yes");
+        }
+
+        static void RemoveFirewallRule() => Netsh($"advfirewall firewall delete rule name=\"{FirewallRuleName}\"");
+
+        static void Netsh(string args)
+        {
+            try { Run(Path.Combine(Environment.SystemDirectory, "netsh.exe"), args, optional: true); }
+            catch (Exception ex) { Log.Error("netsh " + args, ex); }
+        }
+
+        static void Sc(string args, bool optional = false) => Run(Path.Combine(Environment.SystemDirectory, "sc.exe"), args, optional);
+
+        static void Run(string exe, string args, bool optional)
         {
             Encoding oem = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
-            var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "sc.exe"), args)
+            var psi = new ProcessStartInfo(exe, args)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -484,7 +510,7 @@ namespace WinShutDown
                 string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
                 p.WaitForExit();
                 if (p.ExitCode != 0 && !optional)
-                    throw new InvalidOperationException($"Ошибка sc.exe {args}\n\n{output.Trim()}");
+                    throw new InvalidOperationException($"Ошибка {Path.GetFileName(exe)} {args}\n\n{output.Trim()}");
             }
         }
 

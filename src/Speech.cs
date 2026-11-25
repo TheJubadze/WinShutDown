@@ -66,6 +66,34 @@ namespace WinShutDown
             return null;
         }
 
+        /// <summary>Название русского голоса по реестру (без запуска синтеза — подходит и для службы). null — голоса нет.</summary>
+        public static string FindRussianVoiceName()
+        {
+            foreach (string root in new[] { @"SOFTWARE\Microsoft\Speech\Voices\Tokens", @"SOFTWARE\Microsoft\Speech_OneCore\Voices\Tokens" })
+            {
+                try
+                {
+                    using (Microsoft.Win32.RegistryKey tokens = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(root))
+                    {
+                        if (tokens == null) continue;
+                        foreach (string name in tokens.GetSubKeyNames())
+                        {
+                            using (Microsoft.Win32.RegistryKey token = tokens.OpenSubKey(name))
+                            using (Microsoft.Win32.RegistryKey attr = token?.OpenSubKey("Attributes"))
+                            {
+                                string lang = attr?.GetValue("Language") as string ?? "";
+                                foreach (string l in lang.Split(';'))
+                                    if (l.Trim().Equals("419", StringComparison.OrdinalIgnoreCase))
+                                        return token.GetValue("") as string ?? attr.GetValue("Name") as string ?? name;
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+            return null;
+        }
+
         /// <summary>Произнести фразу (не дожидаясь окончания; предыдущая фраза прерывается).</summary>
         public bool Say(string text)
         {

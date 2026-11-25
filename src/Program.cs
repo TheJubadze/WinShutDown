@@ -30,6 +30,8 @@ namespace WinShutDown
         public int InitShutdown = -1, InitAllow = -1;
         public int[] InitWarnings;
         public string OutFile;                // только для --selftest
+        public int RemotePort = WebAdminServer.DefaultPort; // порт веб-админки
+        public bool InitRemote;               // только для --console: включить веб-админку в новых настройках
 
         public static Options Parse(string[] args)
         {
@@ -60,6 +62,8 @@ namespace WinShutDown
                             throw new ArgumentException(err);
                         break;
                     case "--out": o.OutFile = Value(args, ref i); break;
+                    case "--port": o.RemotePort = int.Parse(Value(args, ref i), CultureInfo.InvariantCulture); break;
+                    case "--allow-remote": o.InitRemote = true; break;
                 }
             }
 
@@ -176,6 +180,7 @@ namespace WinShutDown
                 if (opt.InitShutdown >= 0 || opt.InitAllow >= 0)
                     c.Days = Schedule.SameEveryDay(opt.InitAllow >= 0 ? opt.InitAllow : 7 * 60, opt.InitShutdown >= 0 ? opt.InitShutdown : 22 * 60);
                 if (opt.InitWarnings != null) c.Warnings = opt.InitWarnings;
+                c.RemoteEnabled = opt.InitRemote;
                 c.Save(opt.ConfigPath);
             }
 

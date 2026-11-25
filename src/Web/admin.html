@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WinShutDown — управление</title>
+<style>
+  :root {
+    --bg: #f3f4f6; --card: #ffffff; --text: #1d1f23; --muted: #667085; --accent: #005a9e;
+    --accent-text: #ffffff; --danger: #b42318; --ok: #067647; --border: #d0d5dd; --weekend: #b02a2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171c; --card: #1e2128; --text: #e6e8eb; --muted: #98a2b3; --accent: #5aa9ff;
+      --accent-text: #0b1220; --danger: #f97066; --ok: #47cd89; --border: #353b47; --weekend: #ff8a8a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 21px; margin: 6px 0 2px; }
+  .sub { color: var(--muted); margin-bottom: 14px; font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 16px; margin: 0 0 10px; color: var(--accent); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+  label { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+  input { font: inherit; color: var(--text); }
+  input[type=password], input[type=text], input[type=number], input[type=time] {
+    padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card);
+  }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); }
+  button {
+    font: inherit; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--accent);
+    background: var(--accent); color: var(--accent-text); cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: normal; font-size: 13px; }
+  td.center, th.center { text-align: center; }
+  .weekend { color: var(--weekend); }
+  .note { color: var(--muted); font-size: 13px; }
+  .status { font-weight: 600; font-size: 16px; }
+  .msg { margin-top: 8px; min-height: 1.3em; }
+  .msg.err { color: var(--danger); }
+  .msg.ok { color: var(--ok); }
+  .hidden { display: none !important; }
+  .table-wrap { overflow-x: auto; }
+  .short { display: none; }
+  @media (max-width: 540px) {
+    main { padding: 10px; }
+    .card { padding: 12px; }
+    .full { display: none; }
+    .short { display: inline; }
+    th, td { padding: 4px 3px; }
+    th:nth-child(5), td:nth-child(5) { display: none; }
+    input[type=time] { width: auto; min-width: 0; padding: 4px; font-size: 14px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>WinShutDown — <span id="machine">компьютер ребёнка</span></h1>
+  <div class="sub" id="version">Управление через браузер</div>
+
+  <section class="card" id="loginCard">
+    <h2>Вход</h2>
+    <form id="loginForm" class="row" autocomplete="on">
+      <input type="text" name="username" value="parent" autocomplete="username" class="hidden" aria-hidden="true" tabindex="-1">
+      <input type="password" id="password" placeholder="Пароль родителя" autocomplete="current-password" required>
+      <button type="submit" id="loginBtn">Войти</button>
+    </form>
+    <div class="msg" id="loginMsg"></div>
+    <div class="note">Пароль не передаётся по сети: страница только подписывает им запросы.</div>
+  </section>
+
+  <div id="app" class="hidden">
+    <section class="card">
+      <div class="status" id="statusText">…</div>
+      <div class="row" style="margin-top: 12px">
+        <span>Разрешить посидеть подольше сегодня:</span>
+        <input type="number" id="extendMin" min="5" max="600" step="5" value="30" style="width: 5.5em"> мин
+        <button type="button" id="extendBtn">Продлить</button>
+        <button type="button" class="secondary" id="cancelExtBtn">Отменить продление</button>
+      </div>
+      <div class="note" id="extText"></div>
+      <div class="msg" id="extMsg"></div>
+    </section>
+
+    <section class="card">
+      <h2>Расписание</h2>
+      <label><input type="checkbox" id="enabled"> Выключать компьютер по расписанию</label>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>День</th>
+            <th class="center"><span class="full">Ограничить</span><span class="short">Огр.</span></th>
+            <th>Можно с</th><th>Выключать в</th><th></th>
+          </tr></thead>
+          <tbody id="days"></tbody>
+        </table>
+      </div>
+      <div class="note" id="daysHint"></div>
+      <p style="margin-bottom: 0"><label><input type="checkbox" id="adminExempt"> Не выключать, пока за компьютером работает администратор Windows</label></p>
+    </section>
+
+    <section class="card">
+      <h2>Предупреждения</h2>
+      <div class="row">
+        <span>За сколько минут:</span>
+        <input type="text" id="warn" style="width: 9em">
+        <span class="note">через запятую, например: 30, 10, 5</span>
+      </div>
+      <p><label><input type="checkbox" id="voice"> Говорить голосом «Осталось X минут»</label></p>
+      <div class="note" id="voiceText"></div>
+      <div class="note" id="tzText" style="margin-top: 6px"></div>
+    </section>
+
+    <div class="row">
+      <button type="button" id="saveBtn">Сохранить</button>
+      <button type="button" class="secondary" id="reloadBtn">Отменить изменения</button>
+      <button type="button" class="secondary" id="logoutBtn">Выйти</button>
+    </div>
+    <div class="msg" id="saveMsg"></div>
+    <p class="note">Сменить пароль, удалить или обновить программу можно только на компьютере ребёнка.</p>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+// ===== SHA-256, HMAC-SHA256, PBKDF2 на чистом JavaScript =====
+// (встроенная криптография браузера на http-страницах недоступна)
+const K256 = new Uint32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]);
+const IV = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+const W = new Uint32Array(64);
+
+function compress(H, M, off) {
+  for (let i = 0; i < 16; i++) W[i] = M[off + i];
+  for (let i = 16; i < 64; i++) {
+    const w15 = W[i - 15], w2 = W[i - 2];
+    const s0 = ((w15 >>> 7) | (w15 << 25)) ^ ((w15 >>> 18) | (w15 << 14)) ^ (w15 >>> 3);
+    const s1 = ((w2 >>> 17) | (w2 << 15)) ^ ((w2 >>> 19) | (w2 << 13)) ^ (w2 >>> 10);
+    W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;
+  }
+  let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+  for (let i = 0; i < 64; i++) {
+    const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+    const ch = (e & f) ^ (~e & g);
+    const t1 = (h + S1 + ch + K256[i] + W[i]) | 0;
+    const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+    const maj = (a & b) ^ (a & c) ^ (b & c);
+    const t2 = (S0 + maj) | 0;
+    h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+  }
+  H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
+  H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+}
+
+function bytesToWords(bytes) {
+  const w = new Uint32Array(bytes.length >> 2);
+  for (let i = 0; i < w.length; i++)
+    w[i] = (bytes[4 * i] << 24) | (bytes[4 * i + 1] << 16) | (bytes[4 * i + 2] << 8) | bytes[4 * i + 3];
+  return w;
+}
+
+function wordsToBytes(w) {
+  const b = new Uint8Array(w.length * 4);
+  for (let i = 0; i < w.length; i++) {
+    b[4 * i] = w[i] >>> 24; b[4 * i + 1] = (w[i] >>> 16) & 255; b[4 * i + 2] = (w[i] >>> 8) & 255; b[4 * i + 3] = w[i] & 255;
+  }
+  return b;
+}
+
+function sha256(bytes) {
+  const n = bytes.length, blocks = Math.ceil((n + 9) / 64);
+  const buf = new Uint8Array(blocks * 64);
+  buf.set(bytes);
+  buf[n] = 0x80;
+  const bits = n * 8, hi = Math.floor(bits / 0x100000000), lo = bits >>> 0, end = buf.length;
+  buf[end - 8] = hi >>> 24; buf[end - 7] = (hi >>> 16) & 255; buf[end - 6] = (hi >>> 8) & 255; buf[end - 5] = hi & 255;
+  buf[end - 4] = lo >>> 24; buf[end - 3] = (lo >>> 16) & 255; buf[end - 2] = (lo >>> 8) & 255; buf[end - 1] = lo & 255;
+  const M = bytesToWords(buf), H = new Uint32Array(IV);
+  for (let i = 0; i < blocks; i++) compress(H, M, i * 16);
+  return wordsToBytes(H);
+}
+
+function hmac(key, msg) {
+  if (key.length > 64) key = sha256(key);
+  const inner = new Uint8Array(64 + msg.length), outer = new Uint8Array(64 + 32);
+  for (let i = 0; i < 64; i++) {
+    const k = i < key.length ? key[i] : 0;
+    inner[i] = k ^ 0x36;
+    outer[i] = k ^ 0x5c;
+  }
+  inner.set(msg, 64);
+  outer.set(sha256(inner), 64);
+  return sha256(outer);
+}
+
+// PBKDF2-HMAC-SHA256, 32 байта. В цикле состояния ipad/opad вычислены заранее: 2 сжатия на итерацию.
+function pbkdf2(password, salt, iterations) {
+  const key = password.length > 64 ? sha256(password) : password;
+  const pad = new Uint8Array(64);
+  const innerState = new Uint32Array(IV), outerState = new Uint32Array(IV);
+  for (let i = 0; i < 64; i++) pad[i] = (i < key.length ? key[i] : 0) ^ 0x36;
+  compress(innerState, bytesToWords(pad), 0);
+  for (let i = 0; i < 64; i++) pad[i] = (i < key.length ? key[i] : 0) ^ 0x5c;
+  compress(outerState, bytesToWords(pad), 0);
+
+  const first = new Uint8Array(salt.length + 4);
+  first.set(salt);
+  first[salt.length + 3] = 1;
+  const u = bytesToWords(hmac(password, first));
+  const t = new Uint32Array(u);
+  const block = new Uint32Array(16);
+  block[8] = 0x80000000;
+  block[15] = (64 + 32) * 8;
+  const st = new Uint32Array(8);
+  for (let n = 1; n < iterations; n++) {
+    block.set(u);
+    st.set(innerState); compress(st, block, 0);
+    block.set(st);
+    u.set(outerState); compress(u, block, 0);
+    for (let j = 0; j < 8; j++) t[j] ^= u[j];
+  }
+  return wordsToBytes(t);
+}
+
+const utf8 = s => new TextEncoder().encode(s);
+const hex = b => Array.from(b, x => x.toString(16).padStart(2, "0")).join("");
+function b64(bytes) { let s = ""; for (const x of bytes) s += String.fromCharCode(x); return btoa(s); }
+function unb64(s) { const bin = atob(s); const b = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i); return b; }
+
+const cryptoOk = hex(sha256(utf8("abc"))) === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+// ===== обмен со службой =====
+let password = null, key = null, keySalt = null, keyIter = 0;
+let state = null, dirty = false, timer = null;
+
+function parseKV(text) {
+  const r = {};
+  for (const line of text.split("\n")) {
+    const i = line.indexOf("=");
+    if (i > 0) r[line.slice(0, i)] = decodeURIComponent(line.slice(i + 1));
+  }
+  return r;
+}
+
+function encodeKV(obj) {
+  return Object.keys(obj).map(k => k + "=" + encodeURIComponent(obj[k])).join("\n") + "\n";
+}
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", body, cache: "no-store", headers: { "Content-Type": "text/plain;charset=utf-8" } });
+  if (!r.ok) throw new Error("ошибка " + r.status);
+  return parseKV(await r.text());
+}
+
+async function call(cmd, params) {
+  const h = await post("/api/hello", "");
+  if (h.ok !== "1") return h;
+  showMachine(h.machine, h.version);
+  const iter = parseInt(h.iter, 10);
+  if (!key || h.salt !== keySalt || iter !== keyIter) {
+    key = pbkdf2(utf8(password), unb64(h.salt), iter);
+    keySalt = h.salt;
+    keyIter = iter;
+  }
+  const payload = encodeKV(Object.assign({ cmd: cmd, nonce: h.nonce }, params || {}));
+  return post("/api/call", "mac=" + b64(hmac(key, utf8(payload))) + "\n" + payload);
+}
+
+// ===== интерфейс =====
+const $ = id => document.getElementById(id);
+const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Пн…Вс (индексы как в Windows: 0 — воскресенье)
+const DAY_NAMES = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+const DAY_SHORT = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+const rows = [];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function setMsg(el, text, kind) {
+  el.textContent = text || "";
+  el.className = "msg" + (kind ? " " + kind : "");
+}
+
+function showMachine(machine, version) {
+  if (machine) { $("machine").textContent = machine; document.title = "WinShutDown — " + machine; }
+  if (version) $("version").textContent = "Управление через браузер · версия " + version;
+}
+
+function plural(n, one, few, many) {
+  const n10 = n % 10, n100 = n % 100;
+  if (n10 === 1 && n100 !== 11) return one;
+  if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) return few;
+  return many;
+}
+
+function duration(min) {
+  if (min < 1) return "меньше минуты";
+  const d = Math.floor(min / 1440), h = Math.floor(min / 60) % 24, m = min % 60, parts = [];
+  if (d) parts.push(d + " дн");
+  if (h) parts.push(h + " ч");
+  if (m && !d) parts.push(m + " мин");
+  return parts.join(" ");
+}
+
+function dayText(date, today) {
+  if (date === today) return "сегодня";
+  const t = new Date(today + "T00:00:00");
+  t.setDate(t.getDate() + 1);
+  const tomorrow = t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+  if (date === tomorrow) return "завтра";
+  const [y, mo, da] = date.split("-");
+  return da + "." + mo + "." + y;
+}
+
+function describe(s) {
+  if (s.active !== "1") return "Выключение по расписанию сейчас отключено.";
+  if (s.exempt === "1") return "Сейчас за компьютером администратор (" + s.exemptUsers + ") — компьютер не выключается.";
+  if (!s.deadline) return "Все дни без ограничений — выключение не запланировано.";
+  let t = "Следующее выключение: " + dayText(s.deadlineDate, s.today) + " в " + s.deadlineLocal +
+          " (через " + duration(parseInt(s.leftMin || "0", 10)) + ")";
+  if (s.warning === "1") t += " — идут предупреждения";
+  return t;
+}
+
+function buildDays() {
+  const body = $("days");
+  for (const d of DAY_ORDER) {
+    const tr = document.createElement("tr");
+    const name = document.createElement("td");
+    const full = document.createElement("span"); full.className = "full"; full.textContent = DAY_NAMES[d];
+    const short = document.createElement("span"); short.className = "short"; short.textContent = DAY_SHORT[d];
+    name.append(full, short);
+    if (d === 0 || d === 6) name.className = "weekend";
+    const lim = document.createElement("input"); lim.type = "checkbox";
+    const allow = document.createElement("input"); allow.type = "time"; allow.step = 60; allow.required = true;
+    const shut = document.createElement("input"); shut.type = "time"; shut.step = 60; shut.required = true;
+    const note = document.createElement("td"); note.className = "note";
+    const cell = el => { const td = document.createElement("td"); td.appendChild(el); return td; };
+    const limCell = cell(lim); limCell.className = "center";
+    tr.append(name, limCell, cell(allow), cell(shut), note);
+    body.appendChild(tr);
+    const row = { day: d, lim, allow, shut, note };
+    const refresh = () => {
+      allow.disabled = shut.disabled = !lim.checked;
+      if (!lim.checked) note.textContent = "без ограничений";
+      else if (allow.value && allow.value === shut.value) note.textContent = "время совпадает!";
+      else if (allow.value && shut.value && shut.value < allow.value) note.textContent = "после полуночи";
+      else note.textContent = "";
+    };
+    row.refresh = refresh;
+    for (const el of [lim, allow, shut]) el.addEventListener("input", () => { refresh(); dirty = true; });
+    rows[d] = row;
+  }
+}
+
+function parseWarnings(text) {
+  const parts = text.split(/[,; ]+/).filter(x => x);
+  if (!parts.length) return { error: "Укажите, за сколько минут предупреждать, например: 30, 10, 5." };
+  const list = [];
+  for (const p of parts) {
+    const n = Number(p);
+    if (!Number.isInteger(n) || n < 1 || n > 180) return { error: "«" + p + "» — нужно число минут от 1 до 180." };
+    if (!list.includes(n)) list.push(n);
+  }
+  if (list.length > 10) return { error: "Не больше 10 предупреждений." };
+  return { list: list.sort((a, b) => b - a) };
+}
+
+function updateHints() {
+  const w = parseWarnings($("warn").value);
+  const final = w.list ? w.list[w.list.length - 1] : 5;
+  $("daysHint").textContent = $("enabled").checked
+    ? "Вне указанного времени пользоваться компьютером нельзя: если его включить, он выключится через " + final +
+      " мин. Если «Выключать в» меньше, чем «Можно с», компьютер выключится после полуночи."
+    : "Выключение по расписанию отключено — компьютером можно пользоваться без ограничений.";
+  for (const r of rows) if (r) r.lim.disabled = !$("enabled").checked;
+}
+
+function fillForm(s) {
+  $("enabled").checked = s.enabled === "1";
+  $("adminExempt").checked = s.adminexempt !== "0";
+  $("voice").checked = s.voice !== "0";
+  $("warn").value = (s.warn || "").split(",").join(", ");
+  const days = (s.days || "").split(";");
+  for (let d = 0; d < 7; d++) {
+    let v = (days[d] || "07:00-22:00").trim(), free = false;
+    if (v.startsWith("free")) { free = true; v = v.slice(4).trim() || "07:00-22:00"; }
+    const [a, b] = v.split("-");
+    rows[d].lim.checked = !free;
+    rows[d].allow.value = a;
+    rows[d].shut.value = b;
+    rows[d].refresh();
+  }
+  updateHints();
+  dirty = false;
+}
+
+function showStatus(s) {
+  state = s;
+  showMachine(s.machine, s.version);
+  $("statusText").textContent = describe(s);
+  const ext = !!s.ext;
+  $("extText").textContent = ext ? "Сегодня разрешено до " + s.extLocal + "."
+    : "Минуты добавляются к ближайшему выключению (или ко времени «сейчас», если оно уже наступило).";
+  $("cancelExtBtn").disabled = !ext;
+  $("extendBtn").disabled = !(s.active === "1" && s.deadline);
+  $("voiceText").textContent = s.voiceName
+    ? "Голос на компьютере ребёнка: " + s.voiceName + "."
+    : "Русского голоса на компьютере ребёнка нет — вместо голоса будет звуковой сигнал.";
+  $("tzText").textContent = "Часовой пояс: " + (s.tzName || s.tz);
+}
+
+async function refresh(fill) {
+  try {
+    const s = await call("status");
+    if (s.ok !== "1") {
+      if (s.error === "badpwd" || s.error === "locked") { logout(); setMsg($("loginMsg"), s.message, "err"); }
+      return;
+    }
+    showStatus(s);
+    if (fill || !dirty) fillForm(s);
+  } catch (ex) {
+    $("statusText").textContent = "Нет связи с компьютером ребёнка (" + ex.message + "). Возможно, он выключен.";
+  }
+}
+
+function logout() {
+  password = key = keySalt = null;
+  if (timer) clearInterval(timer);
+  timer = null;
+  $("app").classList.add("hidden");
+  $("loginCard").classList.remove("hidden");
+  $("password").focus();
+}
+
+function collect() {
+  const days = [];
+  for (let d = 0; d < 7; d++) {
+    const r = rows[d];
+    if (!r.allow.value || !r.shut.value) return { error: DAY_NAMES[d] + ": укажите время." };
+    if (r.lim.checked && r.allow.value === r.shut.value)
+      return { error: DAY_NAMES[d] + ": время «Можно с» и «Выключать в» совпадают. Если ограничений нет — снимите галочку «Ограничить»." };
+    days.push((r.lim.checked ? "" : "free ") + r.allow.value + "-" + r.shut.value);
+  }
+  const w = parseWarnings($("warn").value);
+  if (w.error) return { error: "Предупреждения: " + w.error };
+  return {
+    params: {
+      enabled: $("enabled").checked ? "1" : "0",
+      days: days.join(";"),
+      warn: w.list.join(","),
+      voice: $("voice").checked ? "1" : "0",
+      adminexempt: $("adminExempt").checked ? "1" : "0",
+      remote: "1",
+      tz: state.tz
+    }
+  };
+}
+
+$("loginForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!cryptoOk) { setMsg($("loginMsg"), "Этот браузер неправильно считает SHA-256 — откройте страницу в другом браузере.", "err"); return; }
+  password = $("password").value;
+  key = null;
+  $("loginBtn").disabled = true;
+  setMsg($("loginMsg"), "Проверяю пароль…");
+  await sleep(30); // дать странице показать сообщение: вычисление ключа занимает около секунды
+  try {
+    const r = await call("login");
+    if (r.ok !== "1") { password = null; setMsg($("loginMsg"), r.message || "Ошибка", "err"); return; }
+    $("password").value = "";
+    setMsg($("loginMsg"), "");
+    $("loginCard").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    await refresh(true);
+    timer = setInterval(() => refresh(false), 5000);
+  } catch (ex) {
+    password = null;
+    setMsg($("loginMsg"), "Нет связи с компьютером ребёнка: " + ex.message, "err");
+  } finally {
+    $("loginBtn").disabled = false;
+  }
+});
+
+$("saveBtn").addEventListener("click", async () => {
+  const c = collect();
+  if (c.error) { setMsg($("saveMsg"), c.error, "err"); return; }
+  $("saveBtn").disabled = true;
+  try {
+    const r = await call("save", c.params);
+    if (r.ok !== "1") { setMsg($("saveMsg"), r.message || "Ошибка", "err"); return; }
+    setMsg($("saveMsg"), "Сохранено. Изменения уже действуют на компьютере ребёнка.", "ok");
+    showStatus(r);
+    fillForm(r);
+  } catch (ex) {
+    setMsg($("saveMsg"), "Не удалось сохранить: " + ex.message, "err");
+  } finally {
+    $("saveBtn").disabled = false;
+  }
+});
+
+async function extend(minutes) {
+  try {
+    const r = await call("extend", { minutes: String(minutes) });
+    if (r.ok !== "1") { setMsg($("extMsg"), r.message || "Ошибка", "err"); return; }
+    setMsg($("extMsg"), minutes ? "Продлено." : "Продление отменено.", "ok");
+    showStatus(r);
+  } catch (ex) {
+    setMsg($("extMsg"), "Ошибка: " + ex.message, "err");
+  }
+}
+
+$("extendBtn").addEventListener("click", () => {
+  const m = parseInt($("extendMin").value, 10);
+  if (!(m >= 5 && m <= 600)) { setMsg($("extMsg"), "Укажите от 5 до 600 минут.", "err"); return; }
+  extend(m);
+});
+$("cancelExtBtn").addEventListener("click", () => extend(0));
+$("reloadBtn").addEventListener("click", () => { if (state) fillForm(state); setMsg($("saveMsg"), ""); });
+$("logoutBtn").addEventListener("click", logout);
+for (const id of ["enabled", "adminExempt", "voice", "warn"])
+  $(id).addEventListener("input", () => { dirty = true; updateHints(); });
+
+buildDays();
+post("/api/hello", "").then(h => showMachine(h.machine, h.version)).catch(() => {});
+$("password").focus();
+</script>
+</body>
+</html>

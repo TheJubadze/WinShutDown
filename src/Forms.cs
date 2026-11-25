@@ -135,6 +135,13 @@ namespace WinShutDown
         TableLayoutPanel daysGrid;
         readonly TextBox txtWarn = new TextBox { Width = 120 };
         readonly CheckBox chkVoice = new CheckBox { Text = "Говорить голосом «Осталось X минут»", AutoSize = true, Checked = true, Margin = new Padding(3, 6, 8, 3) };
+        readonly CheckBox chkRemote = new CheckBox
+        {
+            Text = "Разрешить менять настройки из браузера\nна другом компьютере или телефоне в домашней сети",
+            AutoSize = true,
+            Margin = new Padding(3, 4, 3, 2),
+        };
+        readonly Label lblRemote = Ui.Hint(390);
         readonly CheckBox chkAdminExempt = new CheckBox
         {
             Text = "Не выключать, пока за компьютером работает администратор Windows",
@@ -167,7 +174,7 @@ namespace WinShutDown
             this.opt = opt;
             install = true;
             Build();
-            LoadValues(true, Schedule.DefaultDays(), new[] { 30, 10, 5 }, true, true, TimeZoneInfo.Local.Id);
+            LoadValues(true, Schedule.DefaultDays(), new[] { 30, 10, 5 }, true, true, false, TimeZoneInfo.Local.Id);
         }
 
         /// <summary>Режим изменения настроек (пароль уже проверен).</summary>
@@ -178,7 +185,7 @@ namespace WinShutDown
             this.password = password;
             Build();
             StatusInfo st = client.Status();
-            LoadValues(st.Enabled, st.Days, st.Warnings, st.Voice, st.AdminExempt, st.TimeZoneId);
+            LoadValues(st.Enabled, st.Days, st.Warnings, st.Voice, st.AdminExempt, st.RemoteEnabled, st.TimeZoneId);
             ShowStatus(st);
             refreshTimer.Tick += (s, e) => RefreshStatus();
             refreshTimer.Start();
@@ -278,6 +285,11 @@ namespace WinShutDown
                 : "Оставьте пустым, чтобы не менять.";
             Ui.Span(right, pwdHint);
 
+            Ui.Header(right, "Управление по сети");
+            Ui.Span(right, chkRemote);
+            Ui.Span(right, lblRemote);
+            chkRemote.CheckedChanged += (s, e) => UpdateRemoteHint();
+
             root.Controls.Add(left);
             root.Controls.Add(right);
 
@@ -365,9 +377,26 @@ namespace WinShutDown
             return g;
         }
 
-        void LoadValues(bool enabled, DayRule[] days, int[] warnings, bool voice, bool adminExempt, string tz)
+        void UpdateRemoteHint()
+        {
+            if (!chkRemote.Checked)
+            {
+                lblRemote.Text = "Например, со своего компьютера или телефона, подключённого к той же сети Wi-Fi. " +
+                                 "Нужен будет пароль родителя.";
+                return;
+            }
+            int port = opt.RemotePort;
+            List<string> ips = NetInfo.LocalIPv4();
+            string byIp = ips.Count > 0 ? " или " + string.Join(", ", ips.Select(ip => NetInfo.AdminUrl(ip, port))) : "";
+            lblRemote.Text = $"Откройте в браузере: {NetInfo.AdminUrl(Environment.MachineName, port)}{byIp} " +
+                             "и введите пароль родителя. На телефоне надёжнее адрес с цифрами.";
+        }
+
+        void LoadValues(bool enabled, DayRule[] days, int[] warnings, bool voice, bool adminExempt, bool remote, string tz)
         {
             chkEnabled.Checked = enabled;
+            chkRemote.Checked = remote;
+            UpdateRemoteHint();
             chkVoice.Checked = voice;
             chkAdminExempt.Checked = adminExempt;
             for (int i = 0; i < 7; i++) rows[i].Set(days[i]);
@@ -449,6 +478,7 @@ namespace WinShutDown
                         Warnings = warn,
                         Voice = chkVoice.Checked,
                         AdminExempt = chkAdminExempt.Checked,
+                        RemoteEnabled = chkRemote.Checked,
                         TimeZoneId = tz,
                         PasswordHash = PasswordHasher.Hash(newPwd),
                     };
@@ -464,7 +494,7 @@ namespace WinShutDown
                     return;
                 }
 
-                var r = client.Save(password, chkEnabled.Checked, days, warn, chkVoice.Checked, chkAdminExempt.Checked, tz);
+                var r = client.Save(password, chkEnabled.Checked, days, warn, chkVoice.Checked, chkAdminExempt.Checked, chkRemote.Checked, tz);
                 if (!Protocol.IsOk(r)) { Ui.Warn(this, Protocol.Message(r)); return; }
                 if (newPwd != null)
                 {

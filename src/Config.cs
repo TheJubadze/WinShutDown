@@ -15,6 +15,7 @@ namespace WinShutDown
         public int[] Warnings = { 30, 10, 5 }; // за сколько минут предупреждать (по убыванию)
         public bool Voice = true;              // говорить «Осталось X минут» голосом (если есть русский голос)
         public bool AdminExempt = true;        // не предупреждать и не выключать, пока за компьютером только администраторы
+        public bool RemoteEnabled;             // управление через браузер с другого компьютера домашней сети
         public string TimeZoneId = TimeZoneInfo.Local.Id;
         public string PasswordHash = "";
         public long ExtensionUntilUtcTicks;    // «продлить на сегодня»: до какого момента (UTC)
@@ -62,6 +63,7 @@ namespace WinShutDown
                     case "Enabled": c.Enabled = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase); break;
                     case "Voice": c.Voice = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase); break;
                     case "AdminExempt": c.AdminExempt = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase); break;
+                    case "RemoteAdmin": c.RemoteEnabled = v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase); break;
                     // формат первой версии — одно время на все дни
                     case "Shutdown": if (Schedule.TryParseHm(v, out int s)) legacyShutdown = s; break;
                     case "AllowFrom": if (Schedule.TryParseHm(v, out int a)) legacyAllow = a; break;
@@ -111,12 +113,14 @@ namespace WinShutDown
             sb.AppendLine("# Warnings — за сколько минут предупреждать, через запятую.");
             sb.AppendLine("# Voice — 1: говорить «Осталось X минут» голосом, 0: только звуковой сигнал.");
             sb.AppendLine("# AdminExempt — 1: не выключать, пока за компьютером работает администратор Windows.");
+            sb.AppendLine("# RemoteAdmin — 1: разрешить менять настройки из браузера с другого компьютера домашней сети.");
             sb.AppendLine("Enabled=" + (Enabled ? "1" : "0"));
             foreach (DayOfWeek d in Schedule.WeekOrder)
                 sb.AppendLine(d + "=" + Days[(int)d].Format());
             sb.AppendLine("Warnings=" + Schedule.FormatWarnings(Warnings));
             sb.AppendLine("Voice=" + (Voice ? "1" : "0"));
             sb.AppendLine("AdminExempt=" + (AdminExempt ? "1" : "0"));
+            sb.AppendLine("RemoteAdmin=" + (RemoteEnabled ? "1" : "0"));
             sb.AppendLine("TimeZone=" + TimeZoneId);
             sb.AppendLine("# Служебные значения — не меняйте:");
             sb.AppendLine("Password=" + PasswordHash);
@@ -152,22 +156,34 @@ namespace WinShutDown
 
         public static bool Verify(string password, string stored)
         {
-            if (password == null || string.IsNullOrEmpty(stored)) return false;
+            if (password == null || !TryParse(stored, out int iter, out byte[] salt, out byte[] expected)) return false;
+            byte[] actual = Derive(password, salt, iter, expected.Length);
+            int diff = 0;
+            for (int i = 0; i < expected.Length; i++) diff |= expected[i] ^ actual[i];
+            return diff == 0;
+        }
+
+        /// <summary>Разобрать сохранённый хэш: число итераций, соль и сам ключ (для проверки подписи запросов из браузера).</summary>
+        public static bool TryParse(string stored, out int iterations, out byte[] salt, out byte[] key)
+        {
+            iterations = 0;
+            salt = key = null;
+            if (string.IsNullOrEmpty(stored)) return false;
             string[] p = stored.Split('$');
             if (p.Length != 4 || p[0] != Scheme) return false;
             try
             {
-                int iter = int.Parse(p[1], CultureInfo.InvariantCulture);
-                byte[] salt = Convert.FromBase64String(p[2]);
-                byte[] expected = Convert.FromBase64String(p[3]);
-                if (iter < 1000 || expected.Length < 16) return false;
-                byte[] actual = Derive(password, salt, iter, expected.Length);
-                int diff = 0;
-                for (int i = 0; i < expected.Length; i++) diff |= expected[i] ^ actual[i];
-                return diff == 0;
+                iterations = int.Parse(p[1], CultureInfo.InvariantCulture);
+                salt = Convert.FromBase64String(p[2]);
+                key = Convert.FromBase64String(p[3]);
+                return iterations >= 1000 && key.Length >= 16;
             }
             catch (FormatException) { return false; }
+            catch (OverflowException) { return false; }
         }
+
+        /// <summary>Ключ из пароля — так же его вычисляет страница веб-админки в браузере.</summary>
+        public static byte[] DeriveKey(string password, byte[] salt, int iterations, int length) => Derive(password, salt, iterations, length);
 
         static byte[] Derive(string password, byte[] salt, int iterations, int length)
         {

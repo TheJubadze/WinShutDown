@@ -128,7 +128,8 @@ namespace WinShutDown
         public Dictionary<string, string> Login(string pwd) =>
             Call(new Dictionary<string, string> { ["cmd"] = "login", ["pwd"] = pwd });
 
-        public Dictionary<string, string> Save(string pwd, bool enabled, DayRule[] days, int[] warnings, bool voice, bool adminExempt, string tz) =>
+        public Dictionary<string, string> Save(string pwd, bool enabled, DayRule[] days, int[] warnings, bool voice, bool adminExempt,
+                                               bool remote, string tz) =>
             Call(new Dictionary<string, string>
             {
                 ["cmd"] = "save",
@@ -136,6 +137,7 @@ namespace WinShutDown
                 ["enabled"] = enabled ? "1" : "0",
                 ["voice"] = voice ? "1" : "0",
                 ["adminexempt"] = adminExempt ? "1" : "0",
+                ["remote"] = remote ? "1" : "0",
                 ["days"] = Schedule.FormatDays(days),
                 ["warn"] = Schedule.FormatWarnings(warnings),
                 ["tz"] = tz,
@@ -165,7 +167,7 @@ namespace WinShutDown
 
     internal sealed class StatusInfo
     {
-        public bool Enabled, Active, Warning, Voice = true, AdminExempt = true;
+        public bool Enabled, Active, Warning, Voice = true, AdminExempt = true, RemoteEnabled;
         public bool Exempt;          // сейчас за компьютером администратор — ограничения приостановлены
         public string ExemptUsers;
         public DayRule[] Days = Schedule.DefaultDays();
@@ -185,6 +187,7 @@ namespace WinShutDown
                 Warning = Protocol.Get(d, "warning") == "1",
                 Voice = Protocol.Get(d, "voice") != "0",
                 AdminExempt = Protocol.Get(d, "adminexempt") != "0",
+                RemoteEnabled = Protocol.Get(d, "remote") == "1",
                 Exempt = Protocol.Get(d, "exempt") == "1",
                 ExemptUsers = Protocol.Get(d, "exemptUsers") ?? "",
                 TimeZoneId = Protocol.Get(d, "tz"),
