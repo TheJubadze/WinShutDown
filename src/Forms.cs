@@ -388,9 +388,10 @@ namespace WinShutDown
             int port = opt.RemotePort;
             List<string> ips = NetInfo.LocalIPv4();
             string byIp = ips.Count > 0 ? ", " + string.Join(", ", ips.Select(ip => NetInfo.AdminUrl(ip, port))) : "";
-            lblRemote.Text = $"Откройте в браузере {NetInfo.AdminUrl(MdnsResponder.FixedName, port)} и введите пароль родителя — " +
-                             "этот адрес не меняется. Если не открывается (бывает на Android), используйте " +
-                             $"{NetInfo.AdminUrl(MdnsResponder.MachineLocalName, port)}{byIp}.";
+            // Имя компьютера с .local находит сама Windows — быстро и с текущим адресом, даже если IP сменился.
+            lblRemote.Text = $"Откройте в браузере {NetInfo.AdminUrl(MdnsResponder.MachineLocalName, port)} и введите пароль родителя — " +
+                             "адрес находит компьютер и после смены IP. Запасные адреса: " +
+                             $"{NetInfo.AdminUrl(MdnsResponder.FixedName, port)}{byIp} (на Android надёжнее адрес с цифрами).";
         }
 
         void LoadValues(bool enabled, DayRule[] days, int[] warnings, bool voice, bool adminExempt, bool remote, string tz)
