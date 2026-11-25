@@ -291,6 +291,17 @@ namespace WinShutDown
                 Check("часы: принятое время сохранено и после перезапуска", !clk4.InRollback && clk4.UtcNow == C(19, 0));
                 File.Delete(clockFile);
 
+                // --- ярлык в меню «Пуск» (создаём во временной папке, с русскими буквами и тире в имени) ---
+                string lnkDir = Path.Combine(Path.GetTempPath(), "winshutdown-selftest-lnk");
+                string lnkPath = Path.Combine(lnkDir, "WinShutDown — настройки.lnk");
+                string lnkTarget = Path.Combine(Environment.SystemDirectory, "notepad.exe");
+                if (Directory.Exists(lnkDir)) Directory.Delete(lnkDir, true);
+                Shortcut.Create(lnkPath, lnkTarget, Environment.SystemDirectory, "Настройки WinShutDown");
+                Check("ярлык создан (имя с русскими буквами и тире)", File.Exists(lnkPath));
+                Check("ярлык ведёт на нужную программу",
+                    string.Equals(Shortcut.ReadTarget(lnkPath), lnkTarget, StringComparison.OrdinalIgnoreCase));
+                Directory.Delete(lnkDir, true);
+
                 byte[] wav = Sounds.Alarm();
                 Check("звук сгенерирован", wav.Length > 1000 && Encoding.ASCII.GetString(wav, 0, 4) == "RIFF");
             }

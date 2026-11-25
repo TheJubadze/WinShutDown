@@ -293,8 +293,7 @@ namespace WinShutDown
             }
 
             // 6. Ярлык настроек в меню «Пуск» для всех пользователей.
-            try { CreateShortcut(); }
-            catch { /* не критично */ }
+            CreateShortcut();
         }
 
         public static void Uninstall()
@@ -381,7 +380,7 @@ namespace WinShutDown
                 foreach (string k in SafeBootKeys)
                     using (RegistryKey key = Registry.LocalMachine.CreateSubKey(k))
                         key?.SetValue("", "Service");
-                try { CreateShortcut(); } catch { }
+                CreateShortcut(); // в прежних версиях ярлык мог не создаться
                 AddFirewallRule(); // в прежних версиях правила не было
             }
             catch (Exception ex)
@@ -517,24 +516,18 @@ namespace WinShutDown
             }
         }
 
+        /// <summary>Ярлык настроек в меню «Пуск» для всех пользователей. Не критично: ошибка только пишется в журнал.</summary>
         static void CreateShortcut()
         {
-            Type shellType = Type.GetTypeFromProgID("WScript.Shell");
-            object shell = Activator.CreateInstance(shellType);
             try
             {
-                object lnk = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { ShortcutPath });
-                try
-                {
-                    Type t = lnk.GetType();
-                    t.InvokeMember("TargetPath", BindingFlags.SetProperty, null, lnk, new object[] { InstalledExe });
-                    t.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, lnk, new object[] { InstallDir });
-                    t.InvokeMember("Description", BindingFlags.SetProperty, null, lnk, new object[] { "Настройки WinShutDown" });
-                    t.InvokeMember("Save", BindingFlags.InvokeMethod, null, lnk, null);
-                }
-                finally { Marshal.FinalReleaseComObject(lnk); }
+                Shortcut.Create(ShortcutPath, InstalledExe, InstallDir, "Настройки WinShutDown");
+                Log.Info("Ярлык в меню «Пуск»: " + ShortcutPath);
             }
-            finally { Marshal.FinalReleaseComObject(shell); }
+            catch (Exception ex)
+            {
+                Log.Error("Не удалось создать ярлык в меню «Пуск»: " + ShortcutPath, ex);
+            }
         }
     }
 
