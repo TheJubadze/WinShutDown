@@ -258,7 +258,9 @@ namespace WinShutDown
         }
 
         /// <summary>
-        /// Ответ: на A/ANY — адрес IPv4; на AAAA — запись NSEC «у этого имени есть только IPv4» (чтобы не ждать ответа впустую).
+        /// Ответ по RFC 6762 (§6.1, §6.2), чтобы клиенту не пришлось ждать ответа впустую:
+        ///  • на A/ANY — адрес IPv4, а в дополнительном разделе — NSEC «у этого имени есть только IPv4»;
+        ///  • на AAAA — NSEC «IPv6-адреса нет», а в дополнительном разделе — сам адрес IPv4.
         /// legacy — ответ на обычный DNS-запрос: с вопросом, тем же id и без бита cache-flush.
         /// </summary>
         public static byte[] BuildResponse(ushort id, string name, ushort qtype, IPAddress ip, bool legacy, int ttl)
@@ -272,7 +274,7 @@ namespace WinShutDown
             U16(legacy ? 1 : 0);        // вопросов
             U16(1);                     // ответов
             U16(0);
-            U16(0);
+            U16(1);                     // дополнительных записей
             int nameOffset = (int)ms.Length;
             WriteName(ms, name);
             if (legacy)
@@ -282,7 +284,18 @@ namespace WinShutDown
                 U16(0xC000 | nameOffset); // имя в ответе — ссылкой на вопрос
             }
             int cls = legacy ? 0x0001 : 0x8001; // IN; в mDNS-ответе ещё бит «заменить старые записи»
-            if (qtype == TypeAAAA)
+
+            void WriteA()
+            {
+                U16(TypeA);
+                U16(cls);
+                U32((uint)ttl);
+                U16(4);
+                byte[] a = ip.GetAddressBytes();
+                ms.Write(a, 0, 4);
+            }
+
+            void WriteNsec()
             {
                 U16(TypeNSEC);
                 U16(cls);
@@ -293,15 +306,13 @@ namespace WinShutDown
                 ms.WriteByte(1);          // 1 байт битовой карты
                 ms.WriteByte(0x40);       // есть только тип A (1)
             }
-            else
-            {
-                U16(TypeA);
-                U16(cls);
-                U32((uint)ttl);
-                U16(4);
-                byte[] a = ip.GetAddressBytes();
-                ms.Write(a, 0, 4);
-            }
+
+            if (qtype == TypeAAAA) WriteNsec();
+            else WriteA();
+
+            U16(0xC000 | nameOffset);     // дополнительная запись — для того же имени
+            if (qtype == TypeAAAA) WriteA();
+            else WriteNsec();
             return ms.ToArray();
         }
 

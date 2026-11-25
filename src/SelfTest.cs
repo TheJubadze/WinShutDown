@@ -210,14 +210,30 @@ namespace WinShutDown
                       legacyResp[0] == 0x12 && legacyResp[1] == 0x34 && legacyResp[2] == 0x84 && legacyResp[5] == 1 && legacyResp[7] == 1 &&
                       legacyResp[35] == 0xC0 && legacyResp[36] == 12 && legacyResp[38] == 1 && legacyResp[39] == 0 && legacyResp[40] == 1 &&
                       legacyResp[44] == 10 && legacyResp[46] == 4 &&
-                      legacyResp[47] == 192 && legacyResp[48] == 168 && legacyResp[49] == 1 && legacyResp[50] == 23 && legacyResp.Length == 51);
+                      legacyResp[47] == 192 && legacyResp[48] == 168 && legacyResp[49] == 1 && legacyResp[50] == 23 &&
+                      legacyResp[11] == 1 && legacyResp[53] == 0 && legacyResp[54] == MdnsResponder.TypeNSEC && legacyResp.Length == 68);
                 byte[] mdnsResp = MdnsResponder.BuildResponse(0, "winshutdown.local", MdnsResponder.TypeA, ip, false, 120);
                 Check("mDNS: ответ в группу — id 0, без вопроса, cache-flush, TTL 120",
                       mdnsResp[0] == 0 && mdnsResp[1] == 0 && mdnsResp[5] == 0 && mdnsResp[7] == 1 &&
                       mdnsResp[32] == 1 && mdnsResp[33] == 0x80 && mdnsResp[34] == 1 && mdnsResp[38] == 120 && mdnsResp[44] == 23);
                 byte[] nsec = MdnsResponder.BuildResponse(0, "winshutdown.local", MdnsResponder.TypeAAAA, ip, false, 120);
                 Check("mDNS: на вопрос об IPv6 — NSEC «есть только IPv4»",
-                      nsec[32] == MdnsResponder.TypeNSEC && nsec[40] == 5 && nsec[nsec.Length - 1] == 0x40 && nsec[nsec.Length - 3] == 0);
+                      nsec[32] == MdnsResponder.TypeNSEC && nsec[40] == 5 && nsec[45] == 0x40 && nsec[43] == 0);
+                Check("mDNS: к ответу «нет IPv6» приложен адрес IPv4, к адресу IPv4 — «нет IPv6»",
+                      nsec[11] == 1 && nsec[49] == MdnsResponder.TypeA && nsec[nsec.Length - 1] == 23 && nsec.Length == 62 &&
+                      mdnsResp[11] == 1 && mdnsResp[48] == MdnsResponder.TypeNSEC && mdnsResp.Length == 62);
+
+                // --- переход с имени на IP-адрес ---
+                var lanEp = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("192.168.1.23"), 47800);
+                var mappedEp = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("::ffff:192.168.1.23"), 47800);
+                Check("веб-админка: открыли по имени — переход на IP",
+                      WebAdminServer.RedirectToIp("winshutdown.local:47800", lanEp) == "http://192.168.1.23:47800/" &&
+                      WebAdminServer.RedirectToIp("desktop-abc.local:47800", mappedEp) == "http://192.168.1.23:47800/");
+                Check("веб-админка: открыли по IP — без перехода",
+                      WebAdminServer.RedirectToIp("192.168.1.23:47800", lanEp) == null &&
+                      WebAdminServer.RedirectToIp("[fe80::1]:47800", lanEp) == null &&
+                      WebAdminServer.RedirectToIp(null, lanEp) == null &&
+                      WebAdminServer.RedirectToIp("winshutdown.local:47800", new System.Net.IPEndPoint(System.Net.IPAddress.Parse("fe80::1"), 47800)) == null);
                 Check("mDNS: имена — winshutdown.local и имя компьютера",
                       MdnsResponder.Names.Contains("winshutdown.local") && MdnsResponder.Names[1] == Environment.MachineName.ToLowerInvariant() + ".local");
 

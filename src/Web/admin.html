@@ -63,6 +63,7 @@
 <main>
   <h1>WinShutDown — <span id="machine">компьютер ребёнка</span></h1>
   <div class="sub" id="version">Управление через браузер</div>
+  <div class="sub hidden" id="bookmarkHint"></div>
 
   <section class="card" id="loginCard">
     <h2>Вход</h2>
@@ -534,6 +535,12 @@ for (const id of ["enabled", "adminExempt", "voice", "warn"])
   $(id).addEventListener("input", () => { dirty = true; updateHints(); });
 
 buildDays();
+// Открыли по цифровому адресу (в том числе после перехода с winshutdown.local) — подсказать постоянный адрес для закладки.
+if (/^\d+\.\d+\.\d+\.\d+$/.test(location.hostname)) {
+  $("bookmarkHint").textContent = "Для закладки используйте постоянный адрес http://winshutdown.local:" +
+    (location.port || "47800") + " — цифровой адрес в строке браузера может смениться.";
+  $("bookmarkHint").classList.remove("hidden");
+}
 post("/api/hello", "").then(h => showMachine(h.machine, h.version)).catch(() => {});
 $("password").focus();
 </script>

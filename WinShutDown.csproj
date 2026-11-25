@@ -12,7 +12,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
-    <Version>1.3.0</Version>
+    <Version>1.3.1</Version>
     <Product>WinShutDown</Product>
     <Company>WinShutDown</Company>
     <Description>Принудительное выключение компьютера по расписанию (родительский контроль)</Description>

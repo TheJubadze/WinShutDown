@@ -209,13 +209,17 @@ namespace WinShutDown
                     client.ReceiveTimeout = 5000;
                     client.SendTimeout = 5000;
                     NetworkStream s = client.GetStream();
-                    if (!ReadRequest(s, out string method, out string path, out byte[] body))
+                    if (!ReadRequest(s, out string method, out string path, out string host, out byte[] body))
                     {
                         Respond(s, 400, "text/plain; charset=utf-8", Encoding.UTF8.GetBytes("Bad request"));
                         return;
                     }
                     if (method == "GET" && (path == "/" || path == "/index.html"))
-                        Respond(s, 200, "text/html; charset=utf-8", page);
+                    {
+                        string target = RedirectToIp(host, client.Client.LocalEndPoint as IPEndPoint);
+                        if (target != null) Redirect(s, target);
+                        else Respond(s, 200, "text/html; charset=utf-8", page);
+                    }
                     else if (method == "POST" && path == "/api/hello")
                         Respond(s, 200, "text/plain; charset=utf-8", Protocol.Encode(Hello()));
                     else if (method == "POST" && path == "/api/call")
@@ -260,9 +264,37 @@ namespace WinShutDown
             return engine.HandleRemote(req, macLine.Substring(4), payload, from.ToString());
         }
 
-        static bool ReadRequest(Stream s, out string method, out string path, out byte[] body)
+        /// <summary>
+        /// Страницу открыли по имени (winshutdown.local, ИМЯ-ПК.local) — перенаправляем браузер на IP-адрес, к которому он
+        /// подключился. Поиск имени через mDNS в Windows бывает медленным, а страница обращается к компьютеру постоянно;
+        /// так имя ищется один раз при открытии закладки, а дальше всё идёт по IP. null — перенаправлять не нужно.
+        /// </summary>
+        public static string RedirectToIp(string host, IPEndPoint local)
         {
-            method = path = null;
+            if (string.IsNullOrEmpty(host) || local == null || host.StartsWith("[", StringComparison.Ordinal)) return null;
+            string name = host.Split(':')[0];
+            if (name.Length == 0 || IPAddress.TryParse(name, out _)) return null; // уже открыли по IP
+            IPAddress ip = local.Address.IsIPv4MappedToIPv6 ? local.Address.MapToIPv4() : local.Address;
+            if (ip.AddressFamily != AddressFamily.InterNetwork) return null; // IPv6-адрес с зоной браузеры в адресе не понимают
+            return $"http://{ip}:{local.Port}/";
+        }
+
+        static void Redirect(Stream s, string location)
+        {
+            byte[] h = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 302 Found\r\n" +
+                $"Location: {location}\r\n" +
+                "Content-Length: 0\r\n" +
+                "Cache-Control: no-store\r\n" +
+                "Referrer-Policy: no-referrer\r\n" +
+                "Connection: close\r\n\r\n");
+            s.Write(h, 0, h.Length);
+            s.Flush();
+        }
+
+        static bool ReadRequest(Stream s, out string method, out string path, out string host, out byte[] body)
+        {
+            method = path = host = null;
             body = new byte[0];
             var head = new MemoryStream();
             var buf = new byte[4096];
@@ -287,8 +319,13 @@ namespace WinShutDown
             foreach (string line in lines.Skip(1))
             {
                 int colon = line.IndexOf(':');
-                if (colon > 0 && line.Substring(0, colon).Trim().Equals("Content-Length", StringComparison.OrdinalIgnoreCase) &&
-                    (!int.TryParse(line.Substring(colon + 1).Trim(), out length) || length < 0 || length > MaxBodyBytes))
+                if (colon <= 0) continue;
+                string headerName = line.Substring(0, colon).Trim();
+                string headerValue = line.Substring(colon + 1).Trim();
+                if (headerName.Equals("Host", StringComparison.OrdinalIgnoreCase))
+                    host = headerValue;
+                else if (headerName.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) &&
+                         (!int.TryParse(headerValue, out length) || length < 0 || length > MaxBodyBytes))
                     return false;
             }
 
