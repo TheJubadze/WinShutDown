@@ -152,6 +152,9 @@ namespace WinShutDown
         public Dictionary<string, string> Uninstall(string pwd) =>
             Call(new Dictionary<string, string> { ["cmd"] = "uninstall", ["pwd"] = pwd });
 
+        public Dictionary<string, string> TrustClock(string pwd) =>
+            Call(new Dictionary<string, string> { ["cmd"] = "trustclock", ["pwd"] = pwd });
+
         /// <summary>
         /// Остановить службу для обновления (по паролю). Служба первой версии не знает команды «update»
         /// (отвечает «unknown» без проверки пароля) — тогда останавливаем её командой «uninstall»: в старой
@@ -175,6 +178,16 @@ namespace WinShutDown
 
         /// <summary>false — выключение не запланировано (все дни без ограничений или расписание выключено).</summary>
         public bool HasDeadline => DeadlineUtc != DateTime.MinValue;
+
+        /// <summary>Поправка к своим часам: время службы минус время этого компьютера в момент ответа.
+        /// Если часы Windows перевели назад, служба считает время сама — и обратный отсчёт надо вести по ней.</summary>
+        public TimeSpan Skew;
+
+        /// <summary>Сейчас по часам службы.</summary>
+        public DateTime ServiceNow => DateTime.UtcNow + Skew;
+
+        /// <summary>На сколько минут часы компьютера отстают от времени службы (0 — не отстают).</summary>
+        public int ClockBehindMin;
         public string TimeZoneId, DeadlineLocal, DeadlineDate, Today, ExtLocal;
         public DateTime DeadlineUtc, ExtUtc;
 
@@ -199,6 +212,9 @@ namespace WinShutDown
                 ExtUtc = Ticks(Protocol.Get(d, "ext")),
             };
             if (Schedule.TryParseDays(Protocol.Get(d, "days"), out DayRule[] days, out _)) s.Days = days;
+            DateTime serviceNow = Ticks(Protocol.Get(d, "now"));
+            if (serviceNow != DateTime.MinValue) s.Skew = serviceNow - DateTime.UtcNow;
+            s.ClockBehindMin = int.TryParse(Protocol.Get(d, "clockBehindMin"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int cb) ? cb : 0;
             if (Schedule.TryParseWarnings(Protocol.Get(d, "warn"), out int[] w, out _)) s.Warnings = w;
             return s;
         }

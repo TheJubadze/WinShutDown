@@ -120,7 +120,7 @@ namespace WinShutDown
 
             StatusInfo st = status;
             if (st == null) return;
-            DateTime now = DateTime.UtcNow;
+            DateTime now = st.ServiceNow; // по часам службы: часы Windows могли перевести назад
             TimeSpan left = st.DeadlineUtc - now;
             if (left < TimeSpan.Zero) left = TimeSpan.Zero;
             int? stage = st.Warning ? Schedule.Stage(left, st.Warnings) : null;

@@ -248,6 +248,49 @@ namespace WinShutDown
                 Speaker sp = Speaker.TryCreate();
                 sb.AppendLine("      (русский голос на этом компьютере: " + (sp != null ? sp.VoiceName : "не найден") + ")");
 
+                // --- защита от перевода часов назад (поддельные часы и счётчик) ---
+                string clockFile = Path.Combine(Path.GetTempPath(), "winshutdown-selftest-clock.dat");
+                if (File.Exists(clockFile)) File.Delete(clockFile);
+                DateTime C(int h, int m) => new DateTime(2026, 11, 27, h, m, 0, DateTimeKind.Utc);
+                DateTime fakeSys = C(21, 0);
+                long fakeTicks = 1000000;
+                Func<DateTime> sysClock = () => fakeSys;
+                Func<long> tickCount = () => fakeTicks;
+
+                var clk = new TrustedClock(clockFile, sysClock, tickCount);
+                Check("часы: без сохранённого времени — обычные часы Windows", clk.UtcNow == C(21, 0) && !clk.InRollback);
+                clk.Save(force: true); // компьютер выключился в 21:00
+
+                // В BIOS перевели часы на 3 часа назад и включили компьютер; счётчик после включения начинается заново.
+                fakeSys = C(18, 2);
+                fakeTicks = 5000;
+                var clk2 = new TrustedClock(clockFile, sysClock, tickCount);
+                Check("часы: перевод назад в BIOS замечен после включения", clk2.InRollback && clk2.UtcNow == C(21, 0));
+                fakeSys = fakeSys.AddMinutes(10);
+                fakeTicks += 600000;
+                Check("часы: время идёт от последнего известного по счётчику (21:10, а не 18:12)", clk2.UtcNow == C(21, 10));
+                Check("часы: видно, на сколько отстают часы Windows (2 ч 58 мин)", Math.Abs((clk2.Behind - TimeSpan.FromMinutes(178)).TotalSeconds) < 1);
+
+                fakeSys = C(21, 15); // Windows сверила время с интернетом — часы снова верные
+                fakeTicks += 60000;
+                Check("часы: после сверки с интернетом — снова обычные часы", clk2.UtcNow == C(21, 15) && !clk2.InRollback);
+
+                clk2.Save(force: true);
+                fakeSys = C(21, 14); // отстают на минуту — это не перевод (сохранение раз в минуту, подстройка часов)
+                var clk3 = new TrustedClock(clockFile, sysClock, tickCount);
+                Check("часы: расхождение меньше 2 минут — не перевод", !clk3.InRollback);
+
+                fakeSys = C(21, 20);
+                Check("часы: обычная работа", clk3.UtcNow == C(21, 20));
+                fakeSys = C(19, 0); // часы перевели назад прямо во время работы
+                Check("часы: перевод назад во время работы замечен", clk3.UtcNow == C(21, 20) && clk3.InRollback);
+
+                clk3.AcceptSystemClock();
+                Check("часы: «принять время компьютера» — снова обычные часы", !clk3.InRollback && clk3.UtcNow == C(19, 0));
+                var clk4 = new TrustedClock(clockFile, sysClock, tickCount);
+                Check("часы: принятое время сохранено и после перезапуска", !clk4.InRollback && clk4.UtcNow == C(19, 0));
+                File.Delete(clockFile);
+
                 byte[] wav = Sounds.Alarm();
                 Check("звук сгенерирован", wav.Length > 1000 && Encoding.ASCII.GetString(wav, 0, 4) == "RIFF");
             }

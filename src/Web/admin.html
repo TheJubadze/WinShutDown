@@ -79,6 +79,7 @@
   <div id="app" class="hidden">
     <section class="card">
       <div class="status" id="statusText">…</div>
+      <div class="msg err hidden" id="clockText"></div>
       <div class="row" style="margin-top: 12px">
         <span>Разрешить посидеть подольше сегодня:</span>
         <input type="number" id="extendMin" min="5" max="600" step="5" value="30" style="width: 5.5em"> мин
@@ -426,6 +427,13 @@ function showStatus(s) {
   state = s;
   showMachine(s.machine, s.version);
   $("statusText").textContent = describe(s);
+  const behind = parseInt(s.clockBehindMin || "0", 10);
+  $("clockText").textContent = behind > 0
+    ? "Часы компьютера ребёнка переведены назад (отстают на " + duration(behind) + "). Программа это заметила и считает " +
+      "время сама, поэтому лишнего времени это не даст. Если часы верные (например, меняли батарейку BIOS), примите их " +
+      "время в окне настроек на самом компьютере."
+    : "";
+  $("clockText").classList.toggle("hidden", behind <= 0);
   const ext = !!s.ext;
   $("extText").textContent = ext ? "Сегодня разрешено до " + s.extLocal + "."
     : "Минуты добавляются к ближайшему выключению (или ко времени «сейчас», если оно уже наступило).";

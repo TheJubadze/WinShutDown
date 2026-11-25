@@ -160,6 +160,9 @@ namespace WinShutDown
         readonly Label lblWarnHint = Ui.Hint(390);
         readonly Label lblExt = Ui.Hint(900);
         readonly Label lblStatus = new Label { AutoSize = true, MaximumSize = new Size(900, 0), Margin = new Padding(3, 4, 3, 0) };
+        readonly Label lblClock = new Label { AutoSize = true, MaximumSize = new Size(640, 0), ForeColor = Color.Firebrick, Margin = new Padding(3, 7, 10, 3) };
+        readonly Button btnTrustClock = Ui.Button("Принять время компьютера");
+        FlowLayoutPanel clockPanel;
         readonly Button btnSave = Ui.Button("Сохранить");
         readonly Button btnClose = Ui.Button("Закрыть");
         readonly Button btnUninstall = Ui.Button("Удалить программу…");
@@ -239,6 +242,12 @@ namespace WinShutDown
             {
                 lblStatus.Font = new Font(Ui.BaseFont, FontStyle.Bold);
                 Ui.Span(root, lblStatus);
+                // Часы компьютера переведены назад — предупреждение и кнопка (видны только в этом случае).
+                clockPanel = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 4, 0, 0), Visible = false };
+                clockPanel.Controls.Add(lblClock);
+                clockPanel.Controls.Add(btnTrustClock);
+                Ui.Span(root, clockPanel);
+                btnTrustClock.Click += (s, e) => OnTrustClock();
                 var ext = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
                 ext.Controls.Add(new Label { Text = "Разрешить посидеть подольше сегодня:", AutoSize = true, Margin = new Padding(3, 7, 8, 3) });
                 numExtend.Margin = new Padding(3, 4, 4, 3);
@@ -552,6 +561,26 @@ namespace WinShutDown
             }
         }
 
+        void OnTrustClock()
+        {
+            if (MessageBox.Show(this,
+                    "Принять время, которое сейчас показывают часы компьютера, как верное?\n\n" +
+                    "Делайте это, только если часы действительно показывают правильное время — например, после замены " +
+                    "батарейки BIOS. Если часы перевели назад нарочно, ребёнок получит лишнее время.",
+                    Constants.AppTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                return;
+            try
+            {
+                var r = client.TrustClock(password);
+                if (!Protocol.IsOk(r)) { Ui.Warn(this, Protocol.Message(r)); return; }
+                RefreshStatus();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, Constants.AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
         void OnUninstall()
         {
             if (opt.Test)
@@ -572,7 +601,15 @@ namespace WinShutDown
         void ShowStatus(StatusInfo st)
         {
             lblStatus.Text = Describe(st);
-            bool ext = st.ExtUtc > DateTime.UtcNow;
+            if (clockPanel != null)
+            {
+                clockPanel.Visible = st.ClockBehindMin > 0;
+                lblClock.Text = st.ClockBehindMin > 0
+                    ? $"Часы компьютера переведены назад: они отстают на {Ru.Duration(TimeSpan.FromMinutes(st.ClockBehindMin))}. " +
+                      "Программа это заметила и считает время сама. Если часы верные (например, меняли батарейку BIOS), нажмите кнопку справа."
+                    : "";
+            }
+            bool ext = st.ExtUtc > st.ServiceNow;
             lblExt.Text = ext
                 ? $"Сегодня разрешено до {st.ExtLocal}."
                 : "Минуты добавляются к ближайшему выключению (или ко времени «сейчас», если оно уже наступило).";
@@ -591,7 +628,7 @@ namespace WinShutDown
             if (DateTime.TryParseExact(st.Today, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime today) &&
                 DateTime.TryParseExact(st.DeadlineDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dl))
                 day = DayText(dl, today);
-            string s = $"Следующее выключение: {day} в {st.DeadlineLocal} (через {Ru.Duration(st.DeadlineUtc - DateTime.UtcNow)})";
+            string s = $"Следующее выключение: {day} в {st.DeadlineLocal} (через {Ru.Duration(st.DeadlineUtc - st.ServiceNow)})";
             if (st.Warning) s += " — идут предупреждения";
             return s;
         }

@@ -49,12 +49,20 @@ namespace WinShutDown
 
         public event Action ExitRequested;
 
+        TrustedClock clock;     // время, защищённое от перевода часов назад
+        DateTime lastResyncUtc = DateTime.MinValue;
+
         public Engine(Options opt) { this.opt = opt; }
+
+        /// <summary>Текущее время (UTC), которому можно доверять — см. TrustedClock.</summary>
+        DateTime Now => clock.UtcNow;
 
         public void Start()
         {
+            clock = new TrustedClock(Path.Combine(Path.GetDirectoryName(opt.ConfigPath), "clock.dat"));
             lock (sync) ReloadConfigIfChanged(true);
             agents = new AgentManager(opt);
+            if (!opt.Test) StartTimeSync();
             voiceName = Speaker.FindRussianVoiceName();
             // В тестовом режиме — только на этом компьютере (127.0.0.1), чтобы не открывать порт в сеть.
             web = new WebAdminServer(this, opt.RemotePort, loopbackOnly: opt.Test);
@@ -64,7 +72,20 @@ namespace WinShutDown
             Log.Info($"Запущено, версия {Installer.AppVersion}" + (opt.DryRun ? " — ТЕСТОВЫЙ режим (компьютер не выключается)" : ""));
         }
 
-        public void Stop() => stopEvent.Set();
+        public void Stop()
+        {
+            stopEvent.Set();
+            clock?.Save(force: true); // при выключении Windows — запомнить время
+        }
+
+        /// <summary>Попросить Windows сверить часы с интернетом (в фоне, не чаще раза в 10 минут).</summary>
+        void StartTimeSync()
+        {
+            DateTime real = DateTime.UtcNow;
+            if (real - lastResyncUtc < TimeSpan.FromMinutes(10) && lastResyncUtc <= real) return;
+            lastResyncUtc = real;
+            ThreadPool.QueueUserWorkItem(_ => TimeSync.TryResync());
+        }
 
         void Loop()
         {
@@ -76,7 +97,9 @@ namespace WinShutDown
         {
             try
             {
-                DateTime now = DateTime.UtcNow;
+                DateTime now = Now;
+                clock.Save(); // раз в минуту запоминаем время
+                if (clock.InRollback && !opt.Test) StartTimeSync(); // часы отстают — пробуем исправить их сверкой с интернетом
                 Snapshot s;
                 AppConfig c;
                 string admins = cfg.AdminExempt ? AdminsOnlyAtComputer() : null; // обращения к Windows — вне блокировки
@@ -111,6 +134,7 @@ namespace WinShutDown
                 if (s.Due && (now - lastShutdownAttemptUtc).TotalSeconds >= 60)
                 {
                     lastShutdownAttemptUtc = now;
+                    clock.Save(force: true); // запомнить время выключения — перевод часов назад после этого не поможет
                     Power.ForceShutdown(opt.DryRun);
                     if (opt.DryRun) lock (sync) baseDeadlineUtc = null; // имитация «компьютер включили снова»
                 }
@@ -247,8 +271,17 @@ namespace WinShutDown
                 case "passwd": return Authorized(req, () => ChangePassword(req));
                 case "uninstall": return Authorized(req, Uninstall);
                 case "update": return Authorized(req, StopForUpdate);
+                case "trustclock": return Authorized(req, AcceptClock);
                 default: return Protocol.Error("unknown", "Неизвестная команда");
             }
+        }
+
+        /// <summary>Родитель подтвердил, что часы компьютера верные (например, после замены батарейки BIOS).</summary>
+        Dictionary<string, string> AcceptClock()
+        {
+            clock.AcceptSystemClock();
+            lock (sync) baseDeadlineUtc = null;
+            return StatusResponse();
         }
 
         /// <summary>Проверка пароля с защитой от подбора: после 5 ошибок — блокировка на 5 минут.</summary>
@@ -383,7 +416,7 @@ namespace WinShutDown
                 minutes < 0 || minutes > 12 * 60)
                 return Protocol.Error("bad", "Неверное количество минут");
 
-            DateTime now = DateTime.UtcNow;
+            DateTime now = Now;
             lock (sync)
             {
                 AppConfig next = cfg.Clone();
@@ -449,7 +482,7 @@ namespace WinShutDown
 
         Dictionary<string, string> StatusResponse()
         {
-            DateTime now = DateTime.UtcNow;
+            DateTime now = Now;
             Snapshot s;
             AppConfig c;
             string users;
@@ -477,6 +510,9 @@ namespace WinShutDown
             r["machine"] = Environment.MachineName;
             r["version"] = Installer.AppVersion;
             if (voiceName != null) r["voiceName"] = voiceName;
+            r["now"] = now.Ticks.ToString(inv); // время службы — окна считают обратный отсчёт по нему, а не по своим часам
+            TimeSpan behind = clock.Behind;
+            if (behind > TimeSpan.Zero) r["clockBehindMin"] = ((int)Math.Ceiling(behind.TotalMinutes)).ToString(inv);
             r["today"] = TimeZoneInfo.ConvertTimeFromUtc(now, zone).ToString("yyyy-MM-dd", inv);
             if (s.Active && s.DeadlineUtc != Schedule.Never)
             {

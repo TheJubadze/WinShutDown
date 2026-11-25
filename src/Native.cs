@@ -94,6 +94,10 @@ namespace WinShutDown
         [DllImport("kernel32.dll")]
         public static extern IntPtr GetCurrentProcess();
 
+        /// <summary>Миллисекунды с запуска Windows (включая сон). Не зависит от часов BIOS и Windows.</summary>
+        [DllImport("kernel32.dll")]
+        public static extern ulong GetTickCount64();
+
         // --- сеансы пользователей ---
         [DllImport("wtsapi32.dll", SetLastError = true)]
         public static extern bool WTSEnumerateSessions(IntPtr hServer, int Reserved, int Version, out IntPtr ppSessionInfo, out int pCount);
